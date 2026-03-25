@@ -1,0 +1,6 @@
+pymupdf
+python-dotenv
+anthropic
+pinecone-client
+sentence_transformers
+groq
