@@ -7,24 +7,30 @@ from chunk import chunk_text
 
 load_dotenv()
 
-def store_in_pinecone(chunks: list[dict]):
-    # Load embedding model
-    print("⏳ Loading embedding model...")
-    model = SentenceTransformer("all-MiniLM-L6-v2")
-    print("Embedding model loaded!")
 
-    # Connect to Pinecone
+def store_in_pinecone(chunks: list[dict]):
+    # safety check - no point connecting if nothing to upload
+    if not chunks:
+        print("No chunks found. Please run chunk.py first.")
+        return
+
+    # using sentence transformers to convert text into vectors - free and local
+    print("Loading embedding model...")
+    model = SentenceTransformer("all-MiniLM-L6-v2")
+    print("Embedding model ready!")
+
+    # connecting to pinecone using api key from .env file
     print("\nConnecting to Pinecone...")
     pc = Pinecone(api_key=os.getenv("PINECONE_API_KEY"))
     index_name = "rag-index"
 
-    # Create index if it doesn't exist
+    # check if index already exists so we dont create it twice
     current_index = [i.name for i in pc.list_indexes()]
     if index_name not in current_index:
-        print(f"⏳ Creating index '{index_name}'...")
+        print(f"Creating index '{index_name}'...")
         pc.create_index(
             name=index_name,
-            dimension=384,
+            dimension=384,        # all-MiniLM-L6-v2 produces 384 dim vectors
             metric="cosine",
             spec=ServerlessSpec(
                 cloud="aws",
@@ -37,18 +43,21 @@ def store_in_pinecone(chunks: list[dict]):
 
     index = pc.Index(index_name)
 
-    # Embed + upload in batches
+    # uploading in batches of 50 because of api request size limits
     print(f"\nEmbedding and uploading {len(chunks)} chunks...")
     batch_size = 50
 
     for i in range(0, len(chunks), batch_size):
-        batch = chunks[i:i + batch_size]
-        texts = [c["text"] for c in batch]
-        embeddings = model.encode(texts, show_progress_bar=False)
+        current_batch = chunks[i:i + batch_size]
 
-        vectors = []
-        for chunk, embedding in zip(batch, embeddings):
-            vectors.append({
+        # convert chunk text into vectors using sentence transformers
+        texts = [c["text"] for c in current_batch]
+        encoded_vectors = model.encode(texts, show_progress_bar=False)
+
+        # prepare data in the format pinecone expects
+        vector_list = []
+        for chunk, embedding in zip(current_batch, encoded_vectors):
+            vector_list.append({
                 "id": chunk["id"],
                 "values": embedding.tolist(),
                 "metadata": {
@@ -58,10 +67,14 @@ def store_in_pinecone(chunks: list[dict]):
                 }
             })
 
-        index.upsert(vectors=vectors)
-        print(f"Uploaded chunks {i} to {i + len(batch)}")
+        # upload this batch to pinecone
+        index.upsert(vectors=vector_list)
 
-    print(f"\nAll {len(chunks)} chunks stored in Pinecone!")
+        # show progress as percentage
+        progress = round((i + len(current_batch)) / len(chunks) * 100)
+        print(f"  Uploaded {i + len(current_batch)}/{len(chunks)} chunks ({progress}% done)")
+
+    print(f"\nDone! All {len(chunks)} chunks stored in Pinecone!")
 
 
 if __name__ == "__main__":

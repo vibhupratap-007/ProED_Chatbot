@@ -1,43 +1,75 @@
 import re
 from load import load_pdfs
 
+
 def clean_text(text: str) -> str:
-    #for removing extra blank lines 
+    # for removing extra blank lines
     text = re.sub(r'\n{3,}', '\n\n', text)
-    #for removing non-english characters
+    # for removing non-english characters
     text = re.sub(r'[^\x00-\x7F]+', ' ', text)
-    #replacing multiple spaces and tabs with a single space
+    # replacing multiple spaces and tabs with a single space
     text = re.sub(r'[ \t]+', ' ', text)
-    #remove whitespace
+    # remove whitespace
     text = text.strip()
     return text
 
 
-def chunk_text(pages: list[dict], chunk_size: int = 500, overlap: int = 50) -> list[dict]:
+def split_into_sections(text: str) -> list[str]:
+    # split text at natural boundaries - double newlines mean new paragraph
+    # this is the core of structure-based chunking
+    sections = re.split(r'\n\n+', text)
+
+    # remove sections that are too small to be useful
+    sections = [s.strip() for s in sections if len(s.strip()) > 50]
+    return sections
+
+
+def chunk_text(pages: list[dict], max_words: int = 500, overlap_words: int = 50) -> list[dict]:
     chunk_list = []
     chunk_id = 0
 
     for page in pages:
         cleaned = clean_text(page["text"])
-        words = cleaned.split()
 
-        if len(words) < 20:
-            continue
+        # split page into natural sections first
+        sections = split_into_sections(cleaned)
 
-        start = 0
-        while start < len(words):
-            end = start + chunk_size
-            chunk_text_str = " ".join(words[start:end])
+        current_chunk = ""
+        current_word_count = 0
 
+        for section in sections:
+            section_words = section.split()
+            section_word_count = len(section_words)
+
+            # if adding this section exceeds max size → save current chunk first
+            if current_word_count + section_word_count > max_words and current_chunk:
+                chunk_list.append({
+                    "id": f"chunk_{chunk_id}",
+                    "text": current_chunk.strip(),
+                    "source": page["source"],
+                    "page": page["page"]
+                })
+                chunk_id += 1
+
+                # keep last few words as overlap for context continuity
+                overlap_text = " ".join(current_chunk.split()[-overlap_words:])
+                current_chunk = overlap_text + " " + section
+                current_word_count = len(current_chunk.split())
+
+            else:
+                # section fits — add it to current chunk
+                current_chunk += "\n\n" + section
+                current_word_count += section_word_count
+
+        # save whatever is left at the end of the page
+        if current_chunk.strip():
             chunk_list.append({
                 "id": f"chunk_{chunk_id}",
-                "text": chunk_text_str,
+                "text": current_chunk.strip(),
                 "source": page["source"],
                 "page": page["page"]
             })
-
             chunk_id += 1
-            start += chunk_size - overlap
 
     print(f"Total chunks created: {len(chunk_list)}")
     return chunk_list
