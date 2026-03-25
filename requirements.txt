@@ -4,3 +4,6 @@ anthropic
 pinecone-client
 sentence_transformers
 groq
+fastapi 
+uvicorn
+pydantic
